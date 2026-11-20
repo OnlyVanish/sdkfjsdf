@@ -384,7 +384,7 @@ class MainActivity : Activity() {
     }
 
     private fun requestBytes(path: String, maxBytes: Int, progress: (Long, Long) -> Unit): ByteArray {
-        val connection = openSecureConnection(path)
+        val connection = openServerConnection(path)
         try {
             connection.connectTimeout = 4000
             connection.readTimeout = 6000
@@ -412,7 +412,7 @@ class MainActivity : Activity() {
     }
 
     private fun downloadToFile(path: String, destination: File, maxBytes: Long, expectedSize: Long, progress: (Long, Long) -> Unit) {
-        val connection = openSecureConnection(path)
+        val connection = openServerConnection(path)
         try {
             connection.connectTimeout = 15000
             connection.readTimeout = 45000
@@ -444,10 +444,10 @@ class MainActivity : Activity() {
         } finally { connection.disconnect() }
     }
 
-    private fun openSecureConnection(path: String): HttpURLConnection {
+    private fun openServerConnection(path: String): HttpURLConnection {
         if (!path.startsWith("/") || path.startsWith("//") || path.contains("..")) throw IOException("مسیر دانلود نامعتبر است")
         val url = URL(UPDATE_BASE_URL.trimEnd('/') + path)
-        if (url.protocol != "https" || url.host != UPDATE_HOST) throw IOException("سرور به‌روزرسانی ناامن است")
+        if (url.protocol != "http" || url.host != UPDATE_HOST) throw IOException("نشانی سرور به‌روزرسانی معتبر نیست")
         return (url.openConnection() as? HttpURLConnection) ?: throw IOException("اتصال سرور برقرار نشد")
     }
 
@@ -1143,7 +1143,7 @@ class MainActivity : Activity() {
         const val REQ_IMPORT = 1002
         const val REQ_INSTALL = 1004
         const val MAX_SAVE_BYTES = 1024 * 1024
-        const val UPDATE_BASE_URL = "https://185.26.33.188"
+        const val UPDATE_BASE_URL = "http://185.26.33.188"
         const val UPDATE_HOST = "185.26.33.188"
         const val MAX_APK_BYTES = 1024L * 1024 * 1024
         const val MAX_SEASON_BYTES = 160L * 1024 * 1024
