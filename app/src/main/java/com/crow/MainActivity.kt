@@ -608,9 +608,49 @@ class MainActivity : Activity() {
         fun getInstalledContentPacks(): String = installedContentPacksJson()
     }
 
-    @Deprecated("Simple result handling for the save backup pickers.")
+    // ========== onActivityResult ادغام‌شده (نسخه‌ی نصب APK + خروجی/ورودی سیو) ==========
+    @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+
+        // --- نتیجه‌ی نصب APK ---
+        if (requestCode == REQ_INSTALL) {
+            installerLaunched = false
+            val installedVersion = try {
+                val info = packageManager.getPackageInfo(packageName, 0)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode.toInt() else info.versionCode
+            } catch (_: Exception) { 0 }
+            if (resultCode == RESULT_OK || (pendingInstallVersionCode > 0 && installedVersion >= pendingInstallVersionCode)) {
+                pendingInstallFile = null
+                pendingForceUpdate = false
+                pendingInstallVersionCode = 0
+                val launch = packageManager.getLaunchIntentForPackage(packageName)
+                if (launch != null) {
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    startActivity(launch)
+                }
+                finish()
+                return
+            }
+            if (pendingForceUpdate) {
+                AlertDialog.Builder(this)
+                    .setTitle("به‌روزرسانی نصب نشد")
+                    .setMessage("برای ادامه باید نسخه‌ی جدید Crow نصب شود.")
+                    .setPositiveButton("تلاش دوباره") { _, _ ->
+                        pendingInstallFile?.let { launchSystemInstaller(it) }
+                    }
+                    .setNegativeButton("خروج از بازی") { _, _ -> finish() }
+                    .setCancelable(false)
+                    .show()
+            } else {
+                pendingInstallFile = null
+                pendingInstallVersionCode = 0
+                continueToGame()
+            }
+            return
+        }
+
+        // --- نتیجه‌ی خروجی/ورودی سیو (export/import) ---
         val uri = data?.data
         if (resultCode != RESULT_OK || uri == null) {
             pendingExport = null
@@ -915,44 +955,6 @@ class MainActivity : Activity() {
         } else {
             @Suppress("DEPRECATION")
             audioManager.abandonAudioFocus(focusListener)
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQ_INSTALL) return
-        installerLaunched = false
-        val installedVersion = try {
-            val info = packageManager.getPackageInfo(packageName, 0)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode.toInt() else info.versionCode
-        } catch (_: Exception) { 0 }
-        if (resultCode == RESULT_OK || (pendingInstallVersionCode > 0 && installedVersion >= pendingInstallVersionCode)) {
-            pendingInstallFile = null
-            pendingForceUpdate = false
-            pendingInstallVersionCode = 0
-            val launch = packageManager.getLaunchIntentForPackage(packageName)
-            if (launch != null) {
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                startActivity(launch)
-            }
-            finish()
-            return
-        }
-        if (pendingForceUpdate) {
-            AlertDialog.Builder(this)
-                .setTitle("به‌روزرسانی نصب نشد")
-                .setMessage("برای ادامه باید نسخه‌ی جدید Crow نصب شود.")
-                .setPositiveButton("تلاش دوباره") { _, _ ->
-                    pendingInstallFile?.let { launchSystemInstaller(it) }
-                }
-                .setNegativeButton("خروج از بازی") { _, _ -> finish() }
-                .setCancelable(false)
-                .show()
-        } else {
-            pendingInstallFile = null
-            pendingInstallVersionCode = 0
-            continueToGame()
         }
     }
 
