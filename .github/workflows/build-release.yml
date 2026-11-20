@@ -3,7 +3,7 @@ name: Build Release APK
 on:
   push:
     branches: [ "main", "master" ]
-  workflow_dispatch: # اجازه اجرای دستی از تب Actions
+  workflow_dispatch:
 
 jobs:
   build:
@@ -23,14 +23,22 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Decode Keystore (اختیاری - برای امضای Release)
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > release.jks
-          cat << 'EOF' > keystore.properties
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "Keystore secret تنظیم نشده - رد می‌شود"
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > release.jks
+          cat << EOF > keystore.properties
           storeFile=release.jks
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
           EOF
 
       - name: Make gradlew executable
