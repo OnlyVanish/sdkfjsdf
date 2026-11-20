@@ -19,6 +19,8 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -29,6 +31,8 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
+import android.webkit.ConsoleMessage
+import android.webkit.WebResourceError
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -76,6 +80,9 @@ class MainActivity : Activity() {
     private var installerLaunched: Boolean = false
     private var pendingInstallVersionCode: Int = 0
     private var startupFinished = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var gameLoadTimeout: Runnable? = null
+    private var webErrorDialog: AlertDialog? = null
 
     private val assetLoader by lazy {
         if (!contentDirectory.exists()) contentDirectory.mkdirs()
@@ -251,7 +258,39 @@ class MainActivity : Activity() {
         val view = createGameView()
         gameView = view
         root.addView(view, FrameLayout.LayoutParams(-1, -1))
+        loadGamePage(view)
+    }
+
+    /** Loads the local game and provides a visible failure path instead of leaving a black WebView. */
+    private fun loadGamePage(view: WebView) {
+        gameLoadTimeout?.let(mainHandler::removeCallbacks)
+        val timeout = Runnable {
+            if (gameView === view && !isFinishing && !isDestroyed) {
+                showWebViewLoadError("صفحه‌ی بازی در ۱۵ ثانیه بارگذاری نشد. آدرس: $GAME_URL")
+            }
+        }
+        gameLoadTimeout = timeout
+        mainHandler.postDelayed(timeout, 15_000L)
+        android.util.Log.i("CrowWebView", "Loading local game: $GAME_URL")
         view.loadUrl(GAME_URL)
+    }
+
+    private fun showWebViewLoadError(message: String) {
+        android.util.Log.e("CrowWebView", message)
+        if (isFinishing || isDestroyed || (webErrorDialog?.isShowing == true)) return
+        runOnUiThread {
+            if (isFinishing || isDestroyed || (webErrorDialog?.isShowing == true)) return@runOnUiThread
+            webErrorDialog = AlertDialog.Builder(this)
+                .setTitle("بارگذاری بازی ناموفق بود")
+                .setMessage("صفحه‌ی بازی باز نشد. جزئیات خطا:\n\n$message\n\nبرای بررسی بیشتر، خروجی Logcat با برچسب CrowWebView و chromium را ارسال کن.")
+                .setPositiveButton("تلاش دوباره") { _, _ ->
+                    webErrorDialog = null
+                    gameView?.let(::loadGamePage)
+                }
+                .setNegativeButton("خروج") { _, _ -> finish() }
+                .setCancelable(false)
+                .show()
+        }
     }
 
     private fun offerInstall(file: File, force: Boolean, notes: String, versionCode: Int) {
@@ -460,7 +499,6 @@ class MainActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun createGameView(): WebView = WebView(this).apply {
         setBackgroundColor(Color.BLACK)
-        setLayerType(View.LAYER_TYPE_HARDWARE, null)
         isVerticalScrollBarEnabled = false
         isHorizontalScrollBarEnabled = false
         overScrollMode = View.OVER_SCROLL_NEVER
@@ -483,8 +521,56 @@ class MainActivity : Activity() {
         }
 
         addJavascriptInterface(NativeBridge(), "CrowNative")
-        webChromeClient = WebChromeClient()
+        webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                val line = "${message.message()} (${message.sourceId()}:${message.lineNumber()})"
+                when (message.messageLevel()) {
+                    ConsoleMessage.MessageLevel.ERROR -> android.util.Log.e("CrowWebView", line)
+                    ConsoleMessage.MessageLevel.WARNING -> android.util.Log.w("CrowWebView", line)
+                    else -> android.util.Log.d("CrowWebView", line)
+                }
+                return true
+            }
+        }
         webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                android.util.Log.i("CrowWebView", "onPageStarted: $url")
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                gameLoadTimeout?.let(mainHandler::removeCallbacks)
+                gameLoadTimeout = null
+                android.util.Log.i("CrowWebView", "onPageFinished: $url")
+                view?.evaluateJavascript(
+                    "(function(){var c=document.getElementById('c');return JSON.stringify({ready:document.readyState,canvas:!!c,width:c?c.width:0,height:c?c.height:0,native:!!window.CrowNative});})()"
+                ) { state -> android.util.Log.i("CrowWebView", "Page state: $state") }
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+                if (request?.isForMainFrame == true) {
+                    showWebViewLoadError("${error?.description ?: "خطای ناشناخته در بارگذاری"} (کد ${error?.errorCode ?: -1})")
+                } else {
+                    android.util.Log.w("CrowWebView", "Subresource load failed: ${request?.url} — ${error?.description}")
+                }
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                response: WebResourceResponse?
+            ) {
+                super.onReceivedHttpError(view, request, response)
+                android.util.Log.e("CrowWebView", "HTTP ${response?.statusCode} for ${request?.url}")
+                if (request?.isForMainFrame == true) {
+                    showWebViewLoadError("پاسخ HTTP ${response?.statusCode} هنگام باز کردن صفحه‌ی بازی")
+                }
+            }
+
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -518,7 +604,10 @@ class MainActivity : Activity() {
                 view: WebView?,
                 detail: RenderProcessGoneDetail?
             ): Boolean {
+                android.util.Log.e("CrowWebView", "Renderer gone. didCrash=${detail?.didCrash()}")
                 if (view == null || view !== gameView) return true
+                gameLoadTimeout?.let(mainHandler::removeCallbacks)
+                gameLoadTimeout = null
                 root.removeView(view)
                 view.destroy()
                 val fresh = createGameView()
@@ -530,7 +619,7 @@ class MainActivity : Activity() {
                         FrameLayout.LayoutParams.MATCH_PARENT
                     )
                 )
-                fresh.loadUrl(GAME_URL)
+                loadGamePage(fresh)
                 return true
             }
         }
@@ -1033,6 +1122,10 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        gameLoadTimeout?.let(mainHandler::removeCallbacks)
+        gameLoadTimeout = null
+        webErrorDialog?.dismiss()
+        webErrorDialog = null
         gameView?.let {
             (it.parent as? FrameLayout)?.removeView(it)
             it.stopLoading()
