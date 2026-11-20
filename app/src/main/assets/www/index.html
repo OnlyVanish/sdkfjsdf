@@ -3445,23 +3445,52 @@ function resize() {
   if (G.scene) { G.camXf = clamp(G.camXf, 0, Math.max(0, G.scene.w - W)); updateView(0, true); }
   updateFs();
 }
+function showRuntimeCrash(error) {
+  console.error('Crow game runtime stopped:', error && (error.stack || error.message) || error);
+  if (document.getElementById('crow-runtime-error')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'crow-runtime-error';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;padding:24px;background:#07090f;color:#f2eee4;font-family:Tahoma,Arial,sans-serif;text-align:center;direction:rtl';
+  const card = document.createElement('div');
+  card.style.cssText = 'width:min(520px,100%);padding:24px;border:1px solid #a66f42;border-radius:16px;background:#121722;box-shadow:0 18px 70px #0009';
+  const title = document.createElement('h2'); title.textContent = 'خطای اجرای بازی';
+  title.style.cssText = 'margin:0 0 12px;color:#e7bd7b;font-size:21px';
+  const message = document.createElement('pre');
+  message.textContent = String(error && (error.stack || error.message) || error || 'خطای نامشخص').slice(0, 1800);
+  message.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:36vh;overflow:auto;text-align:left;direction:ltr;color:#d1d2d8;font:12px/1.6 monospace';
+  const retry = document.createElement('button'); retry.textContent = 'بارگذاری دوباره';
+  retry.style.cssText = 'margin-top:12px;padding:12px 26px;border:0;border-radius:10px;background:#d8ad70;color:#17130d;font-weight:bold;font-size:15px';
+  retry.addEventListener('click', () => location.reload());
+  card.append(title, message, retry); overlay.appendChild(card); document.body.appendChild(overlay);
+}
+window.addEventListener('error', event => {
+  if (event.target === window) showRuntimeCrash(event.error || event.message || 'JavaScript error');
+});
+window.addEventListener('unhandledrejection', event => showRuntimeCrash(event.reason || 'Unhandled promise rejection'));
+
 let lastT = performance.now();
 function frame(now) {
-  const dt = Math.min(0.05, Math.max(0, (now - lastT) / 1000)); lastT = now;
-  update(dt);
-  renderWorld();
-  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = '#050409'; ctx.fillRect(0, 0, cv.width, cv.height);
-  ctx.imageSmoothingEnabled = false;
-  if (G.zoom) {
-    const k = clamp(G.zoom.t / G.zoom.dur, 0, 1), e = k * k * (3 - 2 * k), sw = VIEW.sw * (1 - 0.72 * e), sh = VIEW.sh * (1 - 0.72 * e);
-    const cx0 = VIEW.sx + VIEW.sw / 2, cy0 = VIEW.sy + VIEW.sh / 2;
-    const sx = clamp(lerp(cx0, G.zoom.x, e) - sw / 2, 0, W - sw), sy = clamp(lerp(cy0, G.zoom.y, e) - sh / 2, 0, H - sh);
-    ctx.drawImage(low, sx, sy, sw, sh, VP.x, VP.y, VP.w, VP.h);
-    ctx.fillStyle = `rgba(3,2,6,${e * 0.9})`; ctx.fillRect(VP.x, VP.y, VP.w, VP.h);
-  } else if (G.mini) ctx.drawImage(low, 0, 0, W, H, VP.x, VP.y, VP.w, VP.h);
-  else ctx.drawImage(low, VIEW.sx, VIEW.sy, VIEW.sw, VIEW.sh, VP.x, VP.y, VP.w, VP.h);
-  drawUI();
+  try {
+    const dt = Math.min(0.05, Math.max(0, (now - lastT) / 1000)); lastT = now;
+    update(dt);
+    renderWorld();
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#050409'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.imageSmoothingEnabled = false;
+    if (G.zoom) {
+      const k = clamp(G.zoom.t / G.zoom.dur, 0, 1), e = k * k * (3 - 2 * k), sw = VIEW.sw * (1 - 0.72 * e), sh = VIEW.sh * (1 - 0.72 * e);
+      const cx0 = VIEW.sx + VIEW.sw / 2, cy0 = VIEW.sy + VIEW.sh / 2;
+      const sx = clamp(lerp(cx0, G.zoom.x, e) - sw / 2, 0, W - sw), sy = clamp(lerp(cy0, G.zoom.y, e) - sh / 2, 0, H - sh);
+      ctx.drawImage(low, sx, sy, sw, sh, VP.x, VP.y, VP.w, VP.h);
+      ctx.fillStyle = `rgba(3,2,6,${e * 0.9})`; ctx.fillRect(VP.x, VP.y, VP.w, VP.h);
+    } else if (G.mini) ctx.drawImage(low, 0, 0, W, H, VP.x, VP.y, VP.w, VP.h);
+    else ctx.drawImage(low, VIEW.sx, VIEW.sy, VIEW.sw, VIEW.sh, VP.x, VP.y, VP.w, VP.h);
+    drawUI();
+    window.__crowGameFrameReady = true;
+  } catch (error) {
+    showRuntimeCrash(error);
+    return;
+  }
   requestAnimationFrame(frame);
 }
 
@@ -3656,7 +3685,7 @@ function showContentUnavailable(error) {
   title.textContent = 'دریافت پرونده‌ها ناموفق بود';
   title.style.cssText = 'margin:0 0 14px;color:#e7bd7b;font-size:22px';
   const message = document.createElement('p');
-  message.textContent = 'تمام مراحل بازی از سرور دریافت می‌شوند. اینترنت را بررسی کن و دوباره تلاش کن.';
+  message.textContent = 'تمام مراحل بازی از سرور دریافت می‌شوند. اینترنت را بررسی کن و دوباره تلاش کن.' + (error && error.message ? '\n\nجزئیات: ' + error.message : '');
   message.style.cssText = 'line-height:2;color:#d1d2d8;font-size:14px';
   const retry = document.createElement('button');
   retry.textContent = 'تلاش دوباره';
